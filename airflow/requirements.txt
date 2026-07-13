@@ -1,0 +1,8 @@
+# Extra Python dependencies the sales_orders_pipeline DAG needs on top of a
+# base apache-airflow image (see docker-compose.yml `airflow` service,
+# which installs these plus libs/metadata_client and libs/dq_checks at
+# container start for local dev).
+pandas>=2.0,<3.0
+pyarrow>=14.0,<19.0
+sqlalchemy>=2.0,<3.0
+psycopg2-binary>=2.9,<3.0

@@ -1,0 +1,97 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  terraform:
+    name: terraform fmt + validate
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        working-directory:
+          - terraform/modules/s3-data-lake
+          - terraform/modules/iam
+          - terraform/modules/postgres-metadata
+          - terraform/environments/dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7.5"
+
+      - name: terraform fmt -check
+        working-directory: ${{ matrix.working-directory }}
+        run: terraform fmt -check -diff
+
+      - name: terraform init (no backend, no AWS credentials required)
+        working-directory: ${{ matrix.working-directory }}
+        run: terraform init -backend=false
+
+      - name: terraform validate
+        working-directory: ${{ matrix.working-directory }}
+        run: terraform validate
+
+  python-libs:
+    name: python lint + pytest (libs, metadata-api)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install libs/metadata_client deps + tests
+        run: |
+          pip install -r libs/metadata_client/requirements.txt
+          pip install -r libs/dq_checks/requirements.txt
+          pip install -r metadata-api/requirements.txt
+          pip install ruff
+
+      - name: ruff lint (libs, metadata-api)
+        run: |
+          ruff check libs metadata-api
+
+      - name: pytest — libs/metadata_client
+        run: pytest libs/metadata_client/tests -v
+
+      - name: pytest — libs/dq_checks
+        run: pytest libs/dq_checks/tests -v
+
+      - name: pytest — metadata-api
+        working-directory: metadata-api
+        run: pytest tests -v
+
+  dbt-parse:
+    name: dbt parse
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dbt
+        run: pip install -r dbt/requirements.txt
+
+      - name: Materialize profiles.yml from the committed example
+        working-directory: dbt
+        run: cp profiles.yml.example profiles.yml
+
+      - name: dbt parse (project-level compile check, no live DB connection required)
+        working-directory: dbt
+        env:
+          WAREHOUSE_HOST: localhost
+          WAREHOUSE_PORT: "5432"
+          WAREHOUSE_USER: quarry_admin
+          WAREHOUSE_PASSWORD: quarry_dev_password
+          WAREHOUSE_DB: quarry_metadata
+          WAREHOUSE_SCHEMA: analytics
+        run: |
+          dbt parse --profiles-dir . --project-dir .

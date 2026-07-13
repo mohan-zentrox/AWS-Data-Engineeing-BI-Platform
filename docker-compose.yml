@@ -1,0 +1,99 @@
+name: project-quarry
+
+# Local development stack for Project Quarry.
+#
+#   postgres      - the platform metadata store (quarry_metadata schema:
+#                    pipeline_runs / watermarks / dataset_catalog /
+#                    lineage_edges) AND the local-dev "warehouse" stand-in
+#                    for Redshift (raw.sales_orders + dbt's staging/
+#                    intermediate/mart schemas). See
+#                    libs/metadata_client/schema.sql.
+#   metadata-api  - FastAPI service exposing GET /pipelines/{name}/runs and
+#                    GET /catalog over the postgres service above.
+#   airflow       - single-container `airflow standalone` (webserver +
+#                    scheduler + triggerer) running
+#                    airflow/dags/sales_orders_pipeline.py. Uses its own
+#                    internal SQLite metadata DB (Airflow's own state, not
+#                    Project Quarry's) — fine for local dev; MWAA/RDS is
+#                    used for real environments.
+#
+# Run: docker compose up --build
+# Airflow UI: http://localhost:8080 (standalone prints the generated admin
+#   password to container logs on first boot).
+# metadata-api: http://localhost:8000/docs
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: quarry-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: quarry_admin
+      POSTGRES_PASSWORD: quarry_dev_password
+      POSTGRES_DB: quarry_metadata
+    ports:
+      - "5432:5432"
+    volumes:
+      - quarry_postgres_data:/var/lib/postgresql/data
+      - ./libs/metadata_client/schema.sql:/docker-entrypoint-initdb.d/01_quarry_metadata_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quarry_admin -d quarry_metadata"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  metadata-api:
+    build:
+      context: ./metadata-api
+      dockerfile: Dockerfile
+    container_name: quarry-metadata-api
+    restart: unless-stopped
+    environment:
+      METADATA_DATABASE_URL: "postgresql+psycopg2://quarry_admin:quarry_dev_password@postgres:5432/quarry_metadata"
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  airflow:
+    image: apache/airflow:2.9.3-python3.11
+    container_name: quarry-airflow
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+      METADATA_DATABASE_URL: "postgresql+psycopg2://quarry_admin:quarry_dev_password@postgres:5432/quarry_metadata"
+      WAREHOUSE_DATABASE_URL: "postgresql+psycopg2://quarry_admin:quarry_dev_password@postgres:5432/quarry_metadata"
+      RAW_ZONE_PATH: /opt/airflow/data-lake/raw
+      CLEAN_ZONE_PATH: /opt/airflow/data-lake/clean
+      CURATED_ZONE_PATH: /opt/airflow/data-lake/curated
+      SALES_ORDERS_SOURCE_CSV: /opt/airflow/sample-data/sales_orders.csv
+      DBT_PROFILES_DIR: /opt/airflow/dbt
+      PYTHONPATH: /opt/airflow/libs
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/plugins:/opt/airflow/plugins
+      - ./libs:/opt/airflow/libs
+      - ./dbt:/opt/airflow/dbt
+      - ./sample-data:/opt/airflow/sample-data
+      - ./data-lake:/opt/airflow/data-lake
+      - quarry_airflow_home:/opt/airflow
+    ports:
+      - "8080:8080"
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - >
+        pip install --no-cache-dir
+        -r /opt/airflow/libs/metadata_client/requirements.txt
+        -r /opt/airflow/libs/dq_checks/requirements.txt
+        pandas pyarrow sqlalchemy &&
+        cp -n /opt/airflow/dbt/profiles.yml.example /opt/airflow/dbt/profiles.yml &&
+        airflow standalone
+
+volumes:
+  quarry_postgres_data:
+  quarry_airflow_home:

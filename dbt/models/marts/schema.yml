@@ -1,0 +1,24 @@
+version: 2
+
+models:
+  - name: mart_sales_daily
+    description: >
+      Daily sales summary by region: order volume, completion/cancellation
+      counts, unique customers, and revenue. Grain: one row per
+      (order_date, region).
+    columns:
+      - name: order_date
+        tests:
+          - not_null
+      - name: region
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["US-EAST", "US-WEST", "EU-WEST", "APAC"]
+      - name: total_orders
+        tests:
+          - not_null
+      - name: total_revenue
+        tests:
+          - not_null

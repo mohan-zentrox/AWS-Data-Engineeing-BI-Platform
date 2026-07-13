@@ -1,0 +1,29 @@
+version: 2
+
+models:
+  - name: int_sales_orders_enriched
+    description: >
+      Sales order line items enriched with customer name, order month, and
+      completed/cancelled flags. Grain: one row per order line item
+      (same grain as stg_sales_orders).
+    columns:
+      - name: order_id
+        tests:
+          - not_null
+          - unique
+      - name: customer_id
+        description: Foreign key to stg_customers, enforced via relationships test.
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_customers')
+                field: customer_id
+      - name: order_amount
+        tests:
+          - not_null
+      - name: order_status
+        tests:
+          - accepted_values:
+              arguments:
+                values: ["COMPLETED", "PENDING", "CANCELLED"]

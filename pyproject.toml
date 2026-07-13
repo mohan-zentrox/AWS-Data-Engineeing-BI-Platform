@@ -1,0 +1,15 @@
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+exclude = [
+    "dbt/target",
+    "dbt/dbt_packages",
+    "airflow/logs",
+    "data-lake",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = [
+    "E501", # line length is enforced via the formatter/line-length setting above, not as a hard lint error
+]

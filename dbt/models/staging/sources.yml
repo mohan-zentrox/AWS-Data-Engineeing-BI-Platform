@@ -1,0 +1,28 @@
+version: 2
+
+sources:
+  - name: raw
+    description: >
+      Local-dev warehouse landing schema loaded by the Airflow
+      write_curated task (airflow/dags/sales_orders_pipeline.py) via
+      _load_warehouse_staging_table. In AWS this is played by an
+      external/Spectrum table over the curated S3 zone; Postgres stands in
+      for local development.
+    database: "{{ env_var('WAREHOUSE_DB', 'quarry_metadata') }}"
+    schema: raw
+    tables:
+      - name: sales_orders
+        description: Curated, deduplicated sales order line items — vertical slice source.
+        loaded_at_field: loaded_at
+        freshness:
+          warn_after: { count: 26, period: hour }
+          error_after: { count: 50, period: hour }
+        columns:
+          - name: order_id
+            description: Natural key for a sales order line item.
+          - name: customer_id
+            description: Natural key for the ordering customer.
+          - name: order_date
+            description: Calendar date the order was placed.
+          - name: order_amount
+            description: Line-item total in USD (quantity * unit_price).

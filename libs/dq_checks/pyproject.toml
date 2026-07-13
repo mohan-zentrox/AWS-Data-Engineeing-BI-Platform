@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quarry-dq-checks"
+version = "0.1.0"
+description = "Data quality check functions used by Project Quarry's Airflow DQ gate task."
+requires-python = ">=3.10"
+dependencies = [
+    "pandas>=2.0,<3.0",
+]
+
+[tool.setuptools]
+packages = ["dq_checks"]
+package-dir = { "dq_checks" = "." }

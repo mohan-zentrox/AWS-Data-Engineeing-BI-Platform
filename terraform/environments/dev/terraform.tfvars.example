@@ -1,0 +1,17 @@
+# Copy to terraform.tfvars and adjust before running `terraform apply`
+# against a real AWS account. Not committed (see .gitignore).
+
+project     = "quarry"
+environment = "dev"
+aws_region  = "us-east-1"
+
+# Leave null to use AWS-managed (SSE-S3 / default RDS) encryption in dev.
+# kms_key_arn = "arn:aws:kms:us-east-1:123456789012:key/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+
+dev_force_destroy = true
+
+# true => no AWS RDS is provisioned; use docker-compose Postgres locally.
+# Set to false once you want a real dev RDS instance.
+use_local_dev_db = true
+
+metadata_db_name = "quarry_metadata"

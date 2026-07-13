@@ -1,0 +1,36 @@
+# Copy to ~/.dbt/profiles.yml (or set DBT_PROFILES_DIR=dbt so dbt finds this
+# file directly) and fill in real values / env vars before running dbt.
+#
+# Local dev target uses Postgres as a Redshift stand-in (Redshift is
+# wire-compatible with Postgres) — see libs/metadata_client/schema.sql for
+# the `raw` schema this reads from, and docker-compose.yml for the
+# container this points at by default.
+#
+# A `redshift` target is included for parity with the documented serving
+# warehouse; switch `target:` to `redshift` once real cluster credentials
+# are available via Secrets Manager.
+
+project_quarry:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: "{{ env_var('WAREHOUSE_HOST', 'localhost') }}"
+      port: "{{ env_var('WAREHOUSE_PORT', '5432') | as_number }}"
+      user: "{{ env_var('WAREHOUSE_USER', 'quarry_admin') }}"
+      password: "{{ env_var('WAREHOUSE_PASSWORD', 'quarry_dev_password') }}"
+      dbname: "{{ env_var('WAREHOUSE_DB', 'quarry_metadata') }}"
+      schema: "{{ env_var('WAREHOUSE_SCHEMA', 'analytics') }}"
+      threads: 4
+      keepalives_idle: 0
+
+    redshift:
+      type: redshift
+      host: "{{ env_var('REDSHIFT_HOST', '') }}"
+      port: "{{ env_var('REDSHIFT_PORT', '5439') | as_number }}"
+      user: "{{ env_var('REDSHIFT_USER', '') }}"
+      password: "{{ env_var('REDSHIFT_PASSWORD', '') }}"
+      dbname: "{{ env_var('REDSHIFT_DB', 'quarry') }}"
+      schema: "{{ env_var('REDSHIFT_SCHEMA', 'analytics') }}"
+      threads: 4
+      sslmode: require

@@ -1,0 +1,35 @@
+version: 2
+
+models:
+  - name: stg_sales_orders
+    description: Typed, renamed sales order line items sourced from raw.sales_orders.
+    columns:
+      - name: order_id
+        description: Natural key for a sales order line item.
+        tests:
+          - not_null
+          - unique
+      - name: customer_id
+        description: Foreign key to stg_customers.
+        tests:
+          - not_null
+      - name: order_date
+        tests:
+          - not_null
+      - name: order_amount
+        tests:
+          - not_null
+      - name: order_status
+        tests:
+          - accepted_values:
+              arguments:
+                values: ["COMPLETED", "PENDING", "CANCELLED"]
+
+  - name: stg_customers
+    description: Distinct customers derived from raw.sales_orders (single-source vertical slice).
+    columns:
+      - name: customer_id
+        description: Natural key for a customer.
+        tests:
+          - not_null
+          - unique

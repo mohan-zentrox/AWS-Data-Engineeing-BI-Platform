@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quarry-metadata-client"
+version = "0.1.0"
+description = "Internal client library for Project Quarry's Postgres metadata store."
+requires-python = ">=3.10"
+dependencies = [
+    "psycopg2-binary>=2.9,<3.0",
+]
+
+[tool.setuptools]
+packages = ["metadata_client"]
+package-dir = { "metadata_client" = "." }
