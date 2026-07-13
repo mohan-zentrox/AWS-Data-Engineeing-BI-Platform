@@ -87,26 +87,51 @@ cd metadata-api && pytest tests
 
 ## Verification status (read this before trusting green checkmarks)
 
-**This build sandbox has no working `python`, `git`, `terraform`, or
-`docker` binaries** (only a Windows Store App-Execution-Alias stub for
-`python`, which does not run). Every piece of code in this repo was
-**hand-reviewed for syntactic and semantic correctness** — Terraform HCL
-block structure, resource/attribute names against the AWS provider,
-Python import graphs, SQL — but **none of the following were actually
-executed here**:
+This sandbox has no `terraform` or `docker` binary on it (not installed
+anywhere on the machine). Python and git turned out to be present but not
+on `PATH` (found at
+`C:\Users\<user>\AppData\Local\Programs\Python\Python312\python.exe` and
+`C:\Program Files\Git\cmd\git.exe`), so the following were **actually
+executed** in a throwaway venv, not just hand-reviewed:
 
-- `terraform fmt -check` / `terraform validate` (all four module/env
-  directories)
-- `pytest` for `libs/metadata_client`, `libs/dq_checks`, `metadata-api`
-- `dbt parse` / `dbt run` / `dbt test`
-- `docker compose up`
+- `pytest libs/metadata_client/tests libs/dq_checks/tests` — **29 passed**.
+- `pytest metadata-api/tests` — **7 passed**. This caught a real bug: the
+  SQLite in-memory test DB needs `poolclass=StaticPool`, because FastAPI
+  runs sync path operations in a threadpool worker thread, which would
+  otherwise get a *different, empty* `:memory:` database than the one
+  `Base.metadata.create_all()` populated on the main thread. Fixed in
+  `metadata-api/tests/conftest.py`.
+- `ruff check libs metadata-api` — **all checks passed** (after removing
+  one unused import caught by the run).
+- `python -m py_compile` on all 24 `.py` files in the repo — **0 syntax
+  errors**.
+- `dbt parse --profiles-dir . --project-dir .` — **parsed cleanly**: 4
+  models, 21 data tests, 1 source, 0 errors. This caught 4 deprecation
+  warnings (generic test arguments should be nested under `arguments:` in
+  newer dbt versions) — fixed in the `schema.yml` files.
+- `dbt compile` was attempted but requires a live warehouse connection
+  (`localhost:5432` — Postgres isn't running in this sandbox, no Docker
+  available to start it) and failed with a connection-refused error, as
+  expected. `dbt run` / `dbt test` likewise need the real docker-compose
+  Postgres and were **not** run here.
 
-The `.github/workflows/ci.yml` pipeline runs all of the above on every
-push/PR and is the real verification gate — **run CI (or the commands
-above locally) before treating this code as validated**, and treat this
-foundation build as reviewed-by-inspection rather than test-verified until
-then. If you find a bug CI would have caught, that is expected for a
-first pass built without a runnable toolchain — please fix forward.
+**Not executed, hand-reviewed only** (no terraform binary anywhere on this
+machine): `terraform fmt -check` and `terraform validate` for all four
+module/environment directories. Reviewed by hand for HCL block structure,
+required-argument completeness, and AWS provider (v5) resource/attribute
+names — including the `use_local_dev_db` conditional-resource-count pattern
+in `terraform/modules/postgres-metadata` and the newer
+`aws_vpc_security_group_ingress_rule` resource shape. Also not run:
+`docker compose up` (no Docker Engine on this machine) and `dbt run`/`dbt
+test` against a live warehouse (needs that same Docker Postgres).
+
+The `.github/workflows/ci.yml` pipeline runs `terraform fmt`/`validate`,
+`ruff` + `pytest`, and `dbt parse` on every push/PR — treat it as the
+authoritative gate for the terraform validation that couldn't be executed
+in this sandbox. CI does not yet run `dbt run`/`dbt test` against a live
+warehouse (that needs a Postgres service container wired into the
+workflow, not present yet) or `docker compose up` — both are still manual
+verification steps for now.
 
 ## Repository layout
 
