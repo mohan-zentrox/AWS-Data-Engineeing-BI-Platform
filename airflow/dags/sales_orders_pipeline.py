@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import os
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -48,7 +48,6 @@ if str(LIBS_DIR) not in sys.path:
 
 from airflow.decorators import dag, task  # noqa: E402
 from airflow.exceptions import AirflowException  # noqa: E402
-
 from dq_checks import (  # noqa: E402
     DataQualityError,
     check_null_rate,
@@ -67,6 +66,14 @@ RAW_ZONE_ROOT = os.environ.get("RAW_ZONE_PATH", str(REPO_ROOT / "data-lake" / "r
 CLEAN_ZONE_ROOT = os.environ.get("CLEAN_ZONE_PATH", str(REPO_ROOT / "data-lake" / "clean"))
 CURATED_ZONE_ROOT = os.environ.get("CURATED_ZONE_PATH", str(REPO_ROOT / "data-lake" / "curated"))
 SOURCE_CSV_PATH = os.environ.get("SALES_ORDERS_SOURCE_CSV", str(REPO_ROOT / "sample-data" / "sales_orders.csv"))
+
+# dbt location. REPO_ROOT is only correct for a repo checkout — in the
+# docker-compose container the DAG lives at /opt/airflow/dags, so REPO_ROOT
+# resolves to "/". DBT_PROJECT_DIR/DBT_EXECUTABLE let the deployment say
+# where the project and the CLI actually are (see docker-compose.yml, which
+# installs dbt into its own venv to avoid Airflow dependency conflicts).
+DBT_PROJECT_DIR = os.environ.get("DBT_PROJECT_DIR", str(REPO_ROOT / "dbt"))
+DBT_EXECUTABLE = os.environ.get("DBT_EXECUTABLE", "dbt")
 
 DQ_NULL_RATE_THRESHOLD = float(os.environ.get("SALES_ORDERS_NULL_RATE_THRESHOLD", "0.10"))
 VALID_REGIONS = {"US-EAST", "US-WEST", "EU-WEST", "APAC"}
@@ -225,7 +232,7 @@ def sales_orders_pipeline():
                     "aborting curated write to avoid silently curating unvalidated rows."
                 )
             df["order_date"] = pd.to_datetime(df["order_date"]).dt.date
-            df["ingested_at"] = pendulum.now("UTC").to_iso8601_string()
+            df["ingested_at"] = pd.Timestamp.now(tz="UTC")
 
             curated_dir = _zone_dir(CURATED_ZONE_ROOT, run_id)
             curated_path = f"{curated_dir}/sales_orders.parquet"
@@ -253,12 +260,12 @@ def sales_orders_pipeline():
 
         run_id = context["run_id"]
         client = MetadataClient()
-        dbt_project_dir = str(REPO_ROOT / "dbt")
+        dbt_project_dir = DBT_PROJECT_DIR
         dbt_profiles_dir = os.environ.get("DBT_PROFILES_DIR", dbt_project_dir)
 
         with client.run(PIPELINE_NAME, task_name="trigger_dbt_run", dag_run_id=run_id) as set_row_count:
             cmd = [
-                "dbt",
+                DBT_EXECUTABLE,
                 "run",
                 "--project-dir",
                 dbt_project_dir,
@@ -272,8 +279,8 @@ def sales_orders_pipeline():
                 output = result.stdout
             except FileNotFoundError as exc:
                 raise AirflowException(
-                    "dbt CLI not found on PATH. Install dbt-postgres (see dbt/README / requirements) "
-                    "to run this task; DAG code itself is complete."
+                    f"dbt CLI not found at {DBT_EXECUTABLE!r}. Install dbt-postgres "
+                    "(dbt/requirements.txt) and/or set DBT_EXECUTABLE to its path."
                 ) from exc
             except subprocess.CalledProcessError as exc:
                 raise AirflowException(f"dbt run failed:\n{exc.stdout}\n{exc.stderr}") from exc
@@ -304,7 +311,7 @@ def _load_warehouse_staging_table(df) -> None:
 
     engine = sqlalchemy.create_engine(warehouse_url)
     load_df = df.rename(columns={}).copy()
-    load_df["loaded_at"] = datetime.utcnow()
+    load_df["loaded_at"] = datetime.now(timezone.utc)
     with engine.begin() as conn:
         conn.execute(sqlalchemy.text("TRUNCATE TABLE raw.sales_orders"))
         load_df.to_sql("sales_orders", conn, schema="raw", if_exists="append", index=False)

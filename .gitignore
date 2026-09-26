@@ -51,7 +51,10 @@ airflow/webserver_config.py
 airflow/standalone_admin_password.txt
 
 # --- local data lake (dev runs write here) ---
-data-lake/
+# The directory itself is tracked (via .gitkeep) so docker-compose's bind mount
+# finds it instead of creating a root-owned one the airflow user cannot write.
+data-lake/*
+!data-lake/.gitkeep
 
 # --- IDE / OS ---
 .vscode/

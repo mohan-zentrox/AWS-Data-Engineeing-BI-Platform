@@ -67,6 +67,47 @@ def test_requires_dsn():
         MetadataClient(dsn=None, conn_factory=lambda dsn: None)
 
 
+@pytest.mark.parametrize(
+    ("given", "expected"),
+    [
+        # docker-compose.yml / .env.example set the SQLAlchemy-style form,
+        # which libpq (psycopg2.connect) cannot parse.
+        (
+            "postgresql+psycopg2://u:p@host:5432/db",
+            "postgresql://u:p@host:5432/db",
+        ),
+        ("postgres+psycopg2://u:p@host/db", "postgres://u:p@host/db"),
+        # Already-libpq-compatible URLs and keyword/value DSNs pass through.
+        ("postgresql://u:p@host/db", "postgresql://u:p@host/db"),
+        ("host=localhost dbname=quarry_metadata", "host=localhost dbname=quarry_metadata"),
+    ],
+)
+def test_dsn_strips_sqlalchemy_driver_suffix(given, expected):
+    client = MetadataClient(dsn=given, conn_factory=lambda dsn: None)
+    assert client.dsn == expected
+
+
+def test_dsn_normalized_from_env(monkeypatch):
+    monkeypatch.setenv(
+        "METADATA_DATABASE_URL", "postgresql+psycopg2://u:p@postgres:5432/quarry_metadata"
+    )
+    client = MetadataClient(conn_factory=lambda dsn: None)
+    assert client.dsn == "postgresql://u:p@postgres:5432/quarry_metadata"
+
+
+def test_normalized_dsn_is_what_the_conn_factory_receives():
+    seen: list[str] = []
+
+    def factory(dsn: str):
+        seen.append(dsn)
+        return FakeConnection(FakeCursor())
+
+    client = MetadataClient(dsn="postgresql+psycopg2://u:p@host/db", conn_factory=factory)
+    client.start_run("sales_orders_pipeline", task_name="extract")
+
+    assert seen == ["postgresql://u:p@host/db"]
+
+
 def test_start_run_inserts_and_returns_uuid():
     cur = FakeCursor()
     client = make_client(cur)

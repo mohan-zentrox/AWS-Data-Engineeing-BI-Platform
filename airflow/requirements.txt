@@ -4,5 +4,10 @@
 # container start for local dev).
 pandas>=2.0,<3.0
 pyarrow>=14.0,<19.0
-sqlalchemy>=2.0,<3.0
+# Must stay <2.0: apache-airflow 2.9.3 pins sqlalchemy<2.0,>=1.4.36 (as do
+# flask-appbuilder and marshmallow-sqlalchemy). Asking for 2.x here silently
+# uninstalls the image's 1.4.52 and breaks the scheduler/webserver. The DAG's
+# _load_warehouse_staging_table only uses create_engine/text/to_sql, which
+# work the same on 1.4.
+sqlalchemy>=1.4.36,<2.0
 psycopg2-binary>=2.9,<3.0

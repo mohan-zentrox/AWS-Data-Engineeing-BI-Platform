@@ -13,8 +13,18 @@ models:
           - unique
       - name: customer_id
         description: Foreign key to stg_customers, enforced via relationships test.
+        # Deliberately warn-level, not error: the platform tolerates a
+        # bounded null rate on this column. The hard gate is the DAG's
+        # dq_gate task (check_null_rate on customer_id, threshold
+        # SALES_ORDERS_NULL_RATE_THRESHOLD, default 10%), which fails the
+        # run above that. Staging preserves source fidelity, so an
+        # error-level not_null here would fail dbt test on data the
+        # pipeline is specified to accept. The relationships test below
+        # still enforces FK validity for non-null values.
         tests:
-          - not_null
+          - not_null:
+              config:
+                severity: warn
           - relationships:
               arguments:
                 to: ref('stg_customers')

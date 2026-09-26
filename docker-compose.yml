@@ -18,9 +18,15 @@ name: project-quarry
 #                    used for real environments.
 #
 # Run: docker compose up --build
-# Airflow UI: http://localhost:8080 (standalone prints the generated admin
-#   password to container logs on first boot).
+# Airflow UI: http://localhost:8080 — get the generated admin password with
+#   `docker compose exec airflow cat /opt/airflow/standalone_admin_password.txt`
+#   (standalone also prints it on first boot, but that log line does not
+#   survive a container restart; the file does).
 # metadata-api: http://localhost:8000/docs
+#
+# Host ports are overridable so this stack can coexist with other local
+# projects already bound to 5432/8000/8080 — set POSTGRES_PORT,
+# METADATA_API_PORT and/or AIRFLOW_PORT in .env or the shell.
 
 services:
   postgres:
@@ -32,7 +38,7 @@ services:
       POSTGRES_PASSWORD: quarry_dev_password
       POSTGRES_DB: quarry_metadata
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - quarry_postgres_data:/var/lib/postgresql/data
       - ./libs/metadata_client/schema.sql:/docker-entrypoint-initdb.d/01_quarry_metadata_schema.sql:ro
@@ -51,7 +57,7 @@ services:
     environment:
       METADATA_DATABASE_URL: "postgresql+psycopg2://quarry_admin:quarry_dev_password@postgres:5432/quarry_metadata"
     ports:
-      - "8000:8000"
+      - "${METADATA_API_PORT:-8000}:8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -66,31 +72,59 @@ services:
     environment:
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+      # The default 120s gunicorn master timeout is not enough when the DAGs
+      # folder is a bind mount (slow on Docker Desktop for Windows/macOS): the
+      # webserver logs "No response from gunicorn master within 120 seconds"
+      # and shuts down, leaving a working scheduler but no UI. Fewer, more
+      # patient workers is the right trade for a single-user dev stack.
+      AIRFLOW__WEBSERVER__WEB_SERVER_MASTER_TIMEOUT: "300"
+      AIRFLOW__WEBSERVER__WEB_SERVER_WORKER_TIMEOUT: "300"
+      AIRFLOW__WEBSERVER__WORKERS: "2"
       METADATA_DATABASE_URL: "postgresql+psycopg2://quarry_admin:quarry_dev_password@postgres:5432/quarry_metadata"
       WAREHOUSE_DATABASE_URL: "postgresql+psycopg2://quarry_admin:quarry_dev_password@postgres:5432/quarry_metadata"
+      # Consumed by dbt/profiles.yml.example env_var() lookups. Without
+      # these, dbt inside this container would dial localhost:5432.
+      WAREHOUSE_HOST: postgres
+      WAREHOUSE_PORT: "5432"
+      WAREHOUSE_USER: quarry_admin
+      WAREHOUSE_PASSWORD: quarry_dev_password
+      WAREHOUSE_DB: quarry_metadata
+      WAREHOUSE_SCHEMA: analytics
       RAW_ZONE_PATH: /opt/airflow/data-lake/raw
       CLEAN_ZONE_PATH: /opt/airflow/data-lake/clean
       CURATED_ZONE_PATH: /opt/airflow/data-lake/curated
       SALES_ORDERS_SOURCE_CSV: /opt/airflow/sample-data/sales_orders.csv
       DBT_PROFILES_DIR: /opt/airflow/dbt
+      DBT_PROJECT_DIR: /opt/airflow/dbt
+      DBT_EXECUTABLE: /opt/airflow/dbt-venv/bin/dbt
       PYTHONPATH: /opt/airflow/libs
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/plugins:/opt/airflow/plugins
+      - ./airflow/requirements.txt:/opt/airflow/requirements-airflow.txt:ro
       - ./libs:/opt/airflow/libs
       - ./dbt:/opt/airflow/dbt
       - ./sample-data:/opt/airflow/sample-data
       - ./data-lake:/opt/airflow/data-lake
       - quarry_airflow_home:/opt/airflow
     ports:
-      - "8080:8080"
+      - "${AIRFLOW_PORT:-8080}:8080"
     entrypoint: ["/bin/bash", "-c"]
     command:
+      # dbt goes in its own venv rather than alongside Airflow: the two pin
+      # conflicting versions of jinja2/attrs, and trigger_dbt_run shells out to
+      # the CLI anyway (DBT_EXECUTABLE above points at it). The venv lives on
+      # the quarry_airflow_home volume, so it is built once, not every boot.
       - >
         pip install --no-cache-dir
+        -r /opt/airflow/requirements-airflow.txt
         -r /opt/airflow/libs/metadata_client/requirements.txt
-        -r /opt/airflow/libs/dq_checks/requirements.txt
-        pandas pyarrow sqlalchemy &&
+        -r /opt/airflow/libs/dq_checks/requirements.txt &&
+        if [ ! -x /opt/airflow/dbt-venv/bin/dbt ]; then
+        python -m venv /opt/airflow/dbt-venv &&
+        /opt/airflow/dbt-venv/bin/pip install --no-cache-dir
+        -r /opt/airflow/dbt/requirements.txt;
+        fi &&
         cp -n /opt/airflow/dbt/profiles.yml.example /opt/airflow/dbt/profiles.yml &&
         airflow standalone
 

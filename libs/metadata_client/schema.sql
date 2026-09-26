@@ -84,5 +84,10 @@ CREATE TABLE IF NOT EXISTS raw.sales_orders (
     order_amount    NUMERIC(12, 2),
     order_status    TEXT,
     region          TEXT,
+    -- Set by the DAG's write_curated task: when the row was curated. Carried
+    -- through from the curated-zone Parquet so warehouse rows keep their
+    -- curated-zone provenance.
+    ingested_at     TIMESTAMPTZ,
+    -- When the row was loaded into the warehouse table.
     loaded_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );

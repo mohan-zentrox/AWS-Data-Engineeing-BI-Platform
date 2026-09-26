@@ -37,6 +37,22 @@ from .models import DatasetCatalogEntry, PipelineRun
 DEFAULT_DSN_ENV_VAR = "METADATA_DATABASE_URL"
 
 
+def _normalize_dsn(dsn: str) -> str:
+    """Strip a SQLAlchemy driver suffix from a connection URL scheme.
+
+    The platform sets METADATA_DATABASE_URL / WAREHOUSE_DATABASE_URL to
+    SQLAlchemy-style URLs (``postgresql+psycopg2://...``) because
+    metadata-api and the DAG's warehouse loader both build SQLAlchemy
+    engines from them. libpq — and therefore ``psycopg2.connect`` — rejects
+    the ``+psycopg2`` dialect suffix, so normalize it here instead of
+    forcing two near-identical env vars on every deployment.
+    """
+    scheme, sep, rest = dsn.partition("://")
+    if sep and "+" in scheme:
+        return f"{scheme.split('+', 1)[0]}{sep}{rest}"
+    return dsn
+
+
 class MetadataClientError(RuntimeError):
     """Raised for metadata store operation failures."""
 
@@ -58,11 +74,12 @@ class MetadataClient:
         dsn: Optional[str] = None,
         conn_factory: Optional[Callable[[str], Any]] = None,
     ) -> None:
-        self.dsn = dsn or os.environ.get(DEFAULT_DSN_ENV_VAR)
-        if not self.dsn:
+        raw_dsn = dsn or os.environ.get(DEFAULT_DSN_ENV_VAR)
+        if not raw_dsn:
             raise MetadataClientError(
                 f"No DSN provided and {DEFAULT_DSN_ENV_VAR} is not set."
             )
+        self.dsn = _normalize_dsn(raw_dsn)
         self._conn_factory = conn_factory or _default_conn_factory
 
     @contextmanager

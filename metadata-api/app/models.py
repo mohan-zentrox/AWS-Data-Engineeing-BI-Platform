@@ -11,24 +11,28 @@ from datetime import datetime
 from typing import Any, Optional
 
 from sqlalchemy import JSON, BigInteger, DateTime, String, Text
+from sqlalchemy.dialects.postgresql import UUID as PostgresUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base
 
 SCHEMA = "quarry_metadata"
 
-# run_id is stored as text rather than a dialect-specific UUID type so this
-# model works unmodified against both Postgres (the real deployment target;
-# the underlying column is still `UUID PRIMARY KEY` per schema.sql — text
-# values round-trip through it transparently) and SQLite (used by this
-# service's test suite, which has no native UUID type).
+# run_id is `UUID PRIMARY KEY` in schema.sql. Declaring it as plain String
+# here is not enough: writes round-trip fine (psycopg2 casts the text), but on
+# *read* psycopg2 hands back a uuid.UUID for the uuid type OID no matter what
+# the SQLAlchemy column says, which then fails PipelineRunOut validation. The
+# postgresql variant with as_uuid=False makes the Postgres read path return a
+# string, matching what SQLite (this service's test backend, which has no
+# native UUID type) already returns.
+RunIdType = String(36).with_variant(PostgresUUID(as_uuid=False), "postgresql")
 
 
 class PipelineRun(Base):
     __tablename__ = "pipeline_runs"
     __table_args__ = {"schema": SCHEMA}
 
-    run_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    run_id: Mapped[str] = mapped_column(RunIdType, primary_key=True)
     pipeline_name: Mapped[str] = mapped_column(String, nullable=False)
     task_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     dag_run_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
