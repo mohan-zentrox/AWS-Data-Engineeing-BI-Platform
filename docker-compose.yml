@@ -12,10 +12,11 @@ name: project-quarry
 #                    GET /catalog over the postgres service above.
 #   airflow       - single-container `airflow standalone` (webserver +
 #                    scheduler + triggerer) running
-#                    airflow/dags/sales_orders_pipeline.py. Uses its own
-#                    internal SQLite metadata DB (Airflow's own state, not
-#                    Project Quarry's) — fine for local dev; MWAA/RDS is
-#                    used for real environments.
+#                    airflow/dags/sales_orders_pipeline.py. Keeps Airflow's own
+#                    state (DAG runs, task instances, users) in a dedicated
+#                    `airflow` database on the postgres service above, rather
+#                    than the SQLite file it would otherwise default to.
+#                    MWAA/RDS plays this role in real environments.
 #
 # Run: docker compose up --build
 # Airflow UI: http://localhost:8080 — get the generated admin password with
@@ -41,6 +42,7 @@ services:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - quarry_postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres-init/00_create_airflow_db.sql:/docker-entrypoint-initdb.d/00_create_airflow_db.sql:ro
       - ./libs/metadata_client/schema.sql:/docker-entrypoint-initdb.d/01_quarry_metadata_schema.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U quarry_admin -d quarry_metadata"]
@@ -72,11 +74,26 @@ services:
     environment:
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
-      # The default 120s gunicorn master timeout is not enough when the DAGs
-      # folder is a bind mount (slow on Docker Desktop for Windows/macOS): the
-      # webserver logs "No response from gunicorn master within 120 seconds"
-      # and shuts down, leaving a working scheduler but no UI. Fewer, more
-      # patient workers is the right trade for a single-user dev stack.
+      # Airflow's OWN metadata DB (its DAG runs, task instances, users) on the
+      # postgres service, in a dedicated `airflow` database created by
+      # docker/postgres-init/00_create_airflow_db.sql. Left unset, `airflow
+      # standalone` falls back to a SQLite file with SequentialExecutor, which
+      # serializes every task and is explicitly not meant for concurrent
+      # access by scheduler + triggerer + webserver. Postgres also permits a
+      # real executor, so tasks no longer run strictly one at a time.
+      #
+      # NOTE: this is NOT the fix for the webserver failing to start ("No
+      # response from gunicorn master within N seconds"). That was initially
+      # blamed on SQLite lock contention; moving to Postgres did not resolve
+      # it. The measured cost is Airflow's process startup (~21s of CPU for a
+      # no-op `airflow config get-value`, mostly filesystem syscalls) while the
+      # database sits idle. See README finding 9 - still open.
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: "postgresql+psycopg2://quarry_admin:quarry_dev_password@postgres:5432/airflow"
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      # Generous because Airflow's boot is slow on Docker Desktop for
+      # Windows/macOS. These raise the deadline the webserver monitor enforces;
+      # they are a mitigation, not a fix (see README finding 9). If the UI
+      # still will not start, reduce load on the host.
       AIRFLOW__WEBSERVER__WEB_SERVER_MASTER_TIMEOUT: "300"
       AIRFLOW__WEBSERVER__WEB_SERVER_WORKER_TIMEOUT: "300"
       AIRFLOW__WEBSERVER__WORKERS: "2"
@@ -109,6 +126,13 @@ services:
       - quarry_airflow_home:/opt/airflow
     ports:
       - "${AIRFLOW_PORT:-8080}:8080"
+    # PID 1 is `bash -c` below, and bash does not reap orphaned children or
+    # forward signals. Without an init, any stray background process inside the
+    # container can leave an unreapable zombie, after which Docker refuses to
+    # stop the container at all ("PID N is zombie and can not be killed") and it
+    # has to be force-removed. tini costs nothing and makes the container
+    # behave.
+    init: true
     entrypoint: ["/bin/bash", "-c"]
     command:
       # dbt goes in its own venv rather than alongside Airflow: the two pin

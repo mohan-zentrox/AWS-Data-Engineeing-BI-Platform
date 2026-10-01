@@ -85,10 +85,24 @@ ports (in `.env` or the shell) rather than editing the compose file:
 POSTGRES_PORT=15433 METADATA_API_PORT=18001 AIRFLOW_PORT=18081 docker compose up -d
 ```
 
-**When `libs/metadata_client/schema.sql` changes**, remember it is applied via
-`docker-entrypoint-initdb.d`, which only runs on *first* initialisation of the
-Postgres volume. Existing stacks need `docker compose down -v` (destroys local
-data) or a manual `psql` migration.
+**When `libs/metadata_client/schema.sql` or
+`docker/postgres-init/00_create_airflow_db.sql` changes**, remember both are
+applied via `docker-entrypoint-initdb.d`, which only runs on *first*
+initialisation of the Postgres volume. Existing stacks need
+`docker compose down -v` (destroys local data) or a manual `psql` migration.
+If you are upgrading a stack created before Airflow moved off SQLite, the
+`airflow` database will not exist yet and the scheduler will fail to connect;
+create it once without destroying anything:
+
+```
+docker compose exec postgres psql -U quarry_admin -d quarry_metadata \r
+  -c "CREATE DATABASE airflow"
+docker compose up -d --force-recreate --no-deps airflow
+```
+
+Note that this resets Airflow's own run history (it previously lived in the
+SQLite file); Project Quarry's `pipeline_runs` history in `quarry_metadata` is
+untouched, and `airflow standalone` will print a new admin password.
 
 Running dbt directly against the same Postgres (outside Airflow's
 `trigger_dbt_run` task):
@@ -195,9 +209,48 @@ parse` were all green. Each one blocked the pipeline at runtime:
    this. Fixed in `metadata-api/app/models.py` (dialect-aware column type)
    plus a schema-level coercion, with regression tests for both.
 9. The Airflow webserver shut itself down — "No response from gunicorn master
-   within 120 seconds" — under bind-mount latency, leaving a working
-   scheduler but no UI. Timeouts raised and worker count reduced in
-   `docker-compose.yml`.
+   within 120 seconds" — leaving a working scheduler but no UI. Timeouts were
+   raised and worker count reduced in `docker-compose.yml`. **That did not fix
+   it**: the UI died again after about two days of uptime, with the same
+   message at the new 300s limit. Two things are now known, and one is still
+   open:
+
+   - The message is the webserver *monitor* giving up, not a root cause. Raising
+     the limit only moves the deadline.
+   - On a loaded Docker Desktop host the real cost is Airflow process startup,
+     not the database. Measured in this container: a no-op
+     `airflow config get-value core executor` takes ~45s wall and ~21s of CPU
+     (5s user, 16s sys — i.e. filesystem syscalls), while `pg_stat_activity`
+     shows every Airflow connection idle. The webserver's boot is far heavier
+     than that CLI call (provider discovery, FAB permission sync, DAG
+     serialization), so it overruns the monitor's window. This is why the
+     symptom correlates with host load: the verification run on a quiet machine
+     from a clean slate had a working UI.
+   - **Still open.** Mitigations in place are the raised timeouts and reduced
+     worker count; neither is a fix. If the UI will not start, the practical
+     lever is reducing contention on the host (this machine had 21 containers
+     running and the Airflow container pegged at 146% CPU). Replacing
+     `airflow standalone` with separately scheduled webserver/scheduler
+     containers, so the webserver boots without competing with scheduler DAG
+     parsing, is the likely real fix and is not done yet.
+
+   Two related problems *were* fixed while chasing this:
+
+   - Airflow was keeping its own metadata DB in a SQLite file with
+     `SequentialExecutor`. That is unsuitable regardless of the UI question — it
+     serializes all task execution and is explicitly not for concurrent access.
+     Airflow now has a dedicated `airflow` database on the postgres service
+     (`AIRFLOW__DATABASE__SQL_ALCHEMY_CONN`, created by
+     `docker/postgres-init/00_create_airflow_db.sql`) and runs `LocalExecutor`.
+     Note this did *not* resolve the webserver symptom.
+   - PID 1 in the airflow container was `bash -c`, which neither reaps orphans
+     nor forwards signals, so a stray background process could leave a zombie
+     that made the container impossible to stop ("PID N is zombie and can not
+     be killed") and require a force-remove. `init: true` added.
+
+   A stale `/opt/airflow/airflow-webserver.pid` also persists on the
+   `quarry_airflow_home` volume across restarts and blocks startup with
+   "Already running on PID N (or pid file is stale)" — delete it if you hit it.
 
 CI does not yet run `dbt run`/`dbt test` against a live warehouse (that needs
 a Postgres service container wired into the workflow) or `docker compose up`,
