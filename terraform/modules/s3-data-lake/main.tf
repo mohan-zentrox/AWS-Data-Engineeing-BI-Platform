@@ -85,6 +85,12 @@ resource "aws_s3_bucket_lifecycle_configuration" "zone" {
     noncurrent_version_expiration {
       noncurrent_days = var.noncurrent_version_expiration_days
     }
+
+    # An empty filter (= whole bucket) is required, not optional: a rule with
+    # neither `filter` nor `prefix` is accepted by `terraform validate` but
+    # rejected by the S3 API at apply time with MalformedXML. The sibling rule
+    # below carries one for the same reason.
+    filter {}
   }
 
   rule {

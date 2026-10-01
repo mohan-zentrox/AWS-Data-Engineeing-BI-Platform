@@ -60,13 +60,13 @@ resource "aws_security_group" "metadata_db" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "metadata_db_from_clients" {
-  for_each                    = var.use_local_dev_db ? toset([]) : toset(var.allowed_security_group_ids)
-  security_group_id           = aws_security_group.metadata_db[0].id
+  for_each                     = var.use_local_dev_db ? toset([]) : toset(var.allowed_security_group_ids)
+  security_group_id            = aws_security_group.metadata_db[0].id
   referenced_security_group_id = each.value
-  ip_protocol                 = "tcp"
-  from_port                   = 5432
-  to_port                     = 5432
-  description                 = "Postgres access for ${each.value}"
+  ip_protocol                  = "tcp"
+  from_port                    = 5432
+  to_port                      = 5432
+  description                  = "Postgres access for ${each.value}"
 }
 
 resource "aws_db_instance" "metadata" {
@@ -77,12 +77,12 @@ resource "aws_db_instance" "metadata" {
   engine_version = var.engine_version
   instance_class = var.instance_class
 
-  allocated_storage            = var.allocated_storage_gb
-  storage_encrypted            = true
-  kms_key_id                   = var.kms_key_arn
-  db_name                      = var.database_name
-  username                     = var.master_username
-  manage_master_user_password  = var.manage_master_user_password
+  allocated_storage           = var.allocated_storage_gb
+  storage_encrypted           = true
+  kms_key_id                  = var.kms_key_arn
+  db_name                     = var.database_name
+  username                    = var.master_username
+  manage_master_user_password = var.manage_master_user_password
 
   db_subnet_group_name   = aws_db_subnet_group.metadata[0].name
   vpc_security_group_ids = [aws_security_group.metadata_db[0].id]
@@ -90,9 +90,17 @@ resource "aws_db_instance" "metadata" {
   backup_retention_period = var.backup_retention_days
   multi_az                = var.multi_az
   deletion_protection     = var.deletion_protection
-  skip_final_snapshot     = !var.deletion_protection
   publicly_accessible     = false
   copy_tags_to_snapshot   = true
+
+  # Deliberately NOT derived from deletion_protection. Tying the two together
+  # (skip_final_snapshot = !deletion_protection) made the protected/prod path
+  # unusable: the provider requires final_snapshot_identifier whenever
+  # skip_final_snapshot is false, and none was set, so any environment with
+  # deletion_protection = true failed at plan time. They are independent
+  # decisions, so they are independent inputs.
+  skip_final_snapshot       = var.skip_final_snapshot
+  final_snapshot_identifier = var.skip_final_snapshot ? null : coalesce(var.final_snapshot_identifier, "${local.name_prefix}-metadata-db-final")
 
   tags = merge(var.tags, {
     Project     = var.project

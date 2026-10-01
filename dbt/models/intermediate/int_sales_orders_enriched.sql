@@ -19,7 +19,13 @@ enriched as (
     select
         orders.order_id,
         orders.customer_id,
-        customers.customer_name,
+        -- Take the dimension's name when the FK resolves, but fall back to
+        -- the name carried on the order itself. customer_id is nullable by
+        -- design (the DQ gate tolerates a bounded null rate), and a null
+        -- never matches in the left join below — so reading customer_name
+        -- straight off `customers` silently nulled out a name that staging
+        -- actually had for every null-customer_id order.
+        coalesce(customers.customer_name, orders.customer_name) as customer_name,
         orders.order_date,
         date_trunc('month', orders.order_date)      as order_month,
         orders.product_sku,

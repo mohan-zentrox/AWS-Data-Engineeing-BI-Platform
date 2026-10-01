@@ -92,6 +92,23 @@ variable "multi_az" {
   default     = false
 }
 
+variable "skip_final_snapshot" {
+  description = "Skip the final snapshot when the instance is destroyed. Safe in dev; set false in staging/prod so a destroy leaves a recoverable snapshot."
+  type        = bool
+  default     = true
+}
+
+variable "final_snapshot_identifier" {
+  description = <<-EOT
+    Name for the final snapshot taken when skip_final_snapshot = false. Leave
+    null to derive "<project>-<environment>-metadata-db-final". Snapshot names
+    must be unique per account, so override this if a snapshot by that name
+    already exists.
+  EOT
+  type        = string
+  default     = null
+}
+
 variable "deletion_protection" {
   description = "Enable RDS deletion protection."
   type        = bool

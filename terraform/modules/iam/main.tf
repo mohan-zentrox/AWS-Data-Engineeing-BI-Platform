@@ -24,11 +24,11 @@ terraform {
 }
 
 locals {
-  name_prefix   = "${var.project}-${var.environment}"
-  bucket_objs   = [for arn in var.data_lake_bucket_arns : "${arn}/*"]
-  bucket_bases  = var.data_lake_bucket_arns
-  has_kms       = var.kms_key_arn != null
-  has_glue_dbs  = length(var.glue_database_arns) > 0
+  name_prefix  = "${var.project}-${var.environment}"
+  bucket_objs  = [for arn in var.data_lake_bucket_arns : "${arn}/*"]
+  bucket_bases = var.data_lake_bucket_arns
+  has_kms      = var.kms_key_arn != null
+  has_glue_dbs = length(var.glue_database_arns) > 0
 }
 
 # ---------------------------------------------------------------------------

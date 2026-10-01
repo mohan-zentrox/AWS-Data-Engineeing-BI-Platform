@@ -33,11 +33,11 @@ provider "aws" {
 module "s3_data_lake" {
   source = "../../modules/s3-data-lake"
 
-  project        = var.project
-  environment    = var.environment
-  zones          = ["raw", "clean", "curated"]
-  kms_key_arn    = var.kms_key_arn
-  force_destroy  = var.dev_force_destroy
+  project       = var.project
+  environment   = var.environment
+  zones         = ["raw", "clean", "curated"]
+  kms_key_arn   = var.kms_key_arn
+  force_destroy = var.dev_force_destroy
 }
 
 module "iam" {
